@@ -2,8 +2,8 @@ name: Radar Andros
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # cada 30 min (RainViewer guarda 2h, hay margen)
-  workflow_dispatch: {}       # boton para ejecutarlo a mano
+    - cron: "*/30 * * * *"   # every 30 min; RainViewer keeps 2 h, so delayed runs lose nothing
+  workflow_dispatch: {}       # manual trigger button
 
 permissions:
   contents: write
@@ -19,26 +19,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Dependencias
-        run: pip install requests pillow
+      - name: Install dependencies
+        run: pip install requests
 
-      - name: Capturar frames
+      - name: Capture frames
         run: python capture.py
 
-      - name: Commit y push
+      - name: Commit and push
         run: |
           git config user.name "radar-bot"
           git config user.email "actions@users.noreply.github.com"
           git add data
           if git diff --cached --quiet; then
-            echo "sin frames nuevos"
+            echo "no new frames"
           else
-            git commit -m "radar andros $(date -u +%Y-%m-%d_%H:%MZ)"
+            git commit -m "chore: capture radar frames $(date -u +%Y-%m-%dT%H:%MZ)"
             git pull --rebase origin ${GITHUB_REF_NAME}
             git push
           fi
