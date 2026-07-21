@@ -1,6 +1,6 @@
 """
 Captura frames del radar de Bahamas (composite oficial del Bahamas Dept. of
-Meteorology, servido por RainViewer) recortados a la zona de la Isla de Andros.
+Meteorology, servido por RainViewer) centrados en la Isla de Andros.
 
 Guarda dos versiones por frame (cada 10 minutos):
   data/raw/    -> esquema "Black and White": el pixel codifica dBZ.
@@ -12,19 +12,18 @@ Fuente: RainViewer API (uso personal/educativo, atribucion requerida).
 https://www.rainviewer.com/
 """
 
-import io
 import os
 
 import requests
 from datetime import datetime, timezone
-from PIL import Image
 
 API = "https://api.rainviewer.com/public/weather-maps.json"
 
-# Tiles Web Mercator zoom 8 que cubren Andros completa (lat ~23.2-25.8 N)
-Z = 8
-X = 72
-YS = (109, 110)
+# Centro de la Isla de Andros. Zoom 7 es el maximo que permite la API.
+# Imagen 512px a zoom 7 cubre ~2.8 grados: Andros completa con margen.
+LAT, LON = 24.45, -78.0
+ZOOM = 7
+SIZE = 512
 
 # nombre -> (esquema de color, opciones smooth_snow)
 # raw: color 0 (dBZ en escala de grises), sin suavizado (0_0) para no alterar valores
@@ -47,20 +46,13 @@ def main() -> None:
             if os.path.exists(out):
                 continue
 
-            tiles = []
-            for y in YS:
-                url = f"{host}{frame['path']}/512/{Z}/{X}/{y}/{color}/{opts}.png"
-                r = requests.get(url, timeout=60)
-                r.raise_for_status()
-                tiles.append(Image.open(io.BytesIO(r.content)).convert("RGBA"))
-
-            # apilar los dos tiles verticalmente (norte arriba)
-            combo = Image.new("RGBA", (512, 512 * len(tiles)))
-            for i, tile in enumerate(tiles):
-                combo.paste(tile, (0, 512 * i))
+            url = f"{host}{frame['path']}/{SIZE}/{ZOOM}/{LAT}/{LON}/{color}/{opts}.png"
+            r = requests.get(url, timeout=60)
+            r.raise_for_status()
 
             os.makedirs(out_dir, exist_ok=True)
-            combo.save(out, optimize=True)
+            with open(out, "wb") as f:
+                f.write(r.content)
             nuevos += 1
             print("guardado:", out)
 
