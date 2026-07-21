@@ -1,15 +1,21 @@
-"""
-Captura frames del radar de Bahamas (composite oficial del Bahamas Dept. of
-Meteorology, servido por RainViewer) centrados en la Isla de Andros.
+"""Capture Bahamas radar frames centered on Andros Island.
 
-Guarda dos versiones por frame (cada 10 minutos):
-  data/raw/    -> esquema "Black and White": el pixel codifica dBZ.
-                  Decodificar: dBZ = R/2 - 32  (canal rojo del pixel)
-                  Mismas unidades (dBZ) que la leyenda del website oficial.
-  data/visual/ -> esquema a color para inspeccion visual rapida.
+Source: official Bahamas Department of Meteorology composite,
+served by the RainViewer API (personal/educational use, attribution
+required). https://www.rainviewer.com/
 
-Fuente: RainViewer API (uso personal/educativo, atribucion requerida).
-https://www.rainviewer.com/
+Saves two versions per 10-minute frame:
+  data/raw/    -> "Black and White" scheme: pixel encodes reflectivity.
+                  Decode: dBZ = R/2 - 32  (red channel)
+                  Same units (dBZ) as the official radar website legend.
+  data/visual/ -> color scheme for quick visual inspection only.
+
+Geometry: 512x512 px, Web Mercator zoom 7, centered on (24.45 N, -78.0 W).
+Coverage: lon -79.406 to -76.594, lat 23.163 to 25.724 (~0.55 km/px).
+Zoom 7 is the maximum the RainViewer API allows.
+
+Output filenames are frozen (breaking them orphans the archive):
+  data/{raw|visual}/YYYY/MM/DD/andros_YYYYMMDD_HHMMZ_{raw|visual}.png
 """
 
 import os
@@ -19,22 +25,20 @@ from datetime import datetime, timezone
 
 API = "https://api.rainviewer.com/public/weather-maps.json"
 
-# Centro de la Isla de Andros. Zoom 7 es el maximo que permite la API.
-# Imagen 512px a zoom 7 cubre ~2.8 grados: Andros completa con margen.
 LAT, LON = 24.45, -78.0
 ZOOM = 7
 SIZE = 512
 
-# nombre -> (esquema de color, opciones smooth_snow)
-# raw: color 0 (dBZ en escala de grises), sin suavizado (0_0) para no alterar valores
-# visual: color 4 (Universal Blue), suavizado (1_1) solo para mirar
+# label -> (color scheme, smooth_snow options)
+# raw: scheme 0 (dBZ grayscale), unsmoothed (0_0) so values are unaltered
+# visual: scheme 4 (Universal Blue), smoothed (1_1), inspection only
 SCHEMES = {"raw": ("0", "0_0"), "visual": ("4", "1_1")}
 
 
 def main() -> None:
     meta = requests.get(API, timeout=30).json()
     host = meta["host"]
-    nuevos = 0
+    new_frames = 0
 
     for frame in meta["radar"]["past"]:
         ts = frame["time"]
@@ -53,10 +57,10 @@ def main() -> None:
             os.makedirs(out_dir, exist_ok=True)
             with open(out, "wb") as f:
                 f.write(r.content)
-            nuevos += 1
-            print("guardado:", out)
+            new_frames += 1
+            print("saved:", out)
 
-    print(f"frames nuevos: {nuevos}")
+    print(f"new frames: {new_frames}")
 
 
 if __name__ == "__main__":
