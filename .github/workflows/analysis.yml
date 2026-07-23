@@ -43,9 +43,15 @@ jobs:
       - name: GIF, whole archive
         run: python analyze.py gif
 
+      # Only the deliverables. The cached coastline (analysis/*.json) is an
+      # internal working file and is deliberately excluded.
       - name: Publish artifacts
         uses: actions/upload-artifact@v4
         with:
           name: analysis-${{ github.run_id }}
-          path: analysis/
+          path: |
+            analysis/*.csv
+            analysis/*.png
+            analysis/*.html
+            analysis/*.gif
           retention-days: 90
