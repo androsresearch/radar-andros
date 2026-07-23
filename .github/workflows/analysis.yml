@@ -1,0 +1,51 @@
+name: Daily Analysis
+
+# Runs once a day and publishes the analysis products as workflow artifacts
+# (downloadable for 90 days, no repository history growth). Scheduled for
+# 10:00 UTC = 06:00 Bahamas local time (UTC-4, EDT). GitHub throttles
+# scheduled workflows, so the run typically starts 0-60 min late.
+
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install numpy matplotlib pillow plotly scipy
+
+      - name: Time series (CSV, static plot, interactive HTML)
+        run: |
+          python analyze.py series
+          python analyze.py interactive
+
+      - name: Accumulated rainfall heatmap
+        run: python analyze.py heatmap
+
+      - name: GIF, previous day
+        run: python analyze.py gif $(date -u -d yesterday +%Y-%m-%d)
+
+      - name: GIF, whole archive
+        run: python analyze.py gif
+
+      - name: Publish artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}
+          path: analysis/
+          retention-days: 90
