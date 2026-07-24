@@ -29,6 +29,11 @@ Usage:
          analysis/radar_<range>.gif. If more than MAX_GIF_FRAMES frames
          match, they are subsampled evenly.
 
+  python analyze.py status
+      -> writes analysis/status.txt: a short plain-text capture health
+         report (coverage %, longest outages, whether any exceeded the 2 h
+         RainViewer window and are therefore permanently lost)
+
   python analyze.py map data/visual/.../andros_..._visual.png
       -> writes a georeferenced PNG of one frame (coastline, graticule,
          settlements)
@@ -55,7 +60,7 @@ import math
 import os
 import sys
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import matplotlib
@@ -525,6 +530,79 @@ def cmd_gif(day=None):
     print(f"saved: {out} ({len(out_frames)} frames)")
 
 
+
+# ----------------------------------------------------------------- status ---
+def cmd_status():
+    """Write a short plain-text capture health report to analysis/status.txt.
+
+    Reports what fraction of the expected 10-minute slots were actually
+    archived, and lists the longest outages. RainViewer only exposes a
+    rolling 2 h window, so a gap longer than that is permanently lost and
+    is worth acting on; shorter gaps are recovered automatically by the
+    next capture cycle.
+    """
+    frames = quantitative_frames()
+    if not frames:
+        print("no frames found")
+        return
+    times = sorted(frame_time(f) for f in frames)
+    slots = expected_slots(times)
+    have = set(times)
+    missing = [s for s in slots if s not in have]
+
+    blocks = []
+    for m in missing:
+        if blocks and m - blocks[-1][-1] == timedelta(minutes=FRAME_MINUTES):
+            blocks[-1].append(m)
+        else:
+            blocks.append([m])
+    blocks.sort(key=len, reverse=True)
+    lost = [b for b in blocks if len(b) * FRAME_MINUTES > 120]
+
+    coverage = 100.0 * len(have) / len(slots)
+    health = "GOOD" if coverage >= 95 else ("CHECK" if coverage >= 85 else "PROBLEM")
+
+    lines = []
+    lines.append("ANDROS RADAR ARCHIVE - CAPTURE STATUS")
+    lines.append(f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
+    lines.append("")
+    lines.append(f"Status:            {health}")
+    lines.append(f"Coverage:          {coverage:.1f}% of expected frames")
+    lines.append(f"Archive period:    {times[0]:%Y-%m-%d %H:%M}Z to {times[-1]:%Y-%m-%d %H:%M}Z")
+    lines.append(f"Frames expected:   {len(slots)}")
+    lines.append(f"Frames captured:   {len(have)}")
+    lines.append(f"Frames missing:    {len(missing)}")
+    lines.append("")
+
+    if not missing:
+        lines.append("No gaps: every expected frame was captured.")
+    else:
+        lines.append(f"Gaps occur in {len(blocks)} separate outages. Longest:")
+        for b in blocks[:8]:
+            mins = len(b) * FRAME_MINUTES
+            flag = "  <- permanently lost (>2 h)" if mins > 120 else ""
+            lines.append(f"  {b[0]:%m-%d %H:%M}Z to {b[-1]:%m-%d %H:%M}Z"
+                         f"  ({len(b)} frames, {mins} min){flag}")
+        lines.append("")
+        if lost:
+            lines.append(f"{len(lost)} outage(s) exceeded the 2 h RainViewer window, so those")
+            lines.append("frames cannot be recovered. Check that the capture workflow is running.")
+        else:
+            lines.append("All outages were shorter than the 2 h RainViewer window, so no")
+            lines.append("frames were permanently lost to a stalled capture.")
+
+    lines.append("")
+    lines.append("Note: a gap means no image was archived for that moment. It does not")
+    lines.append("mean no rain. Gaps are left blank in the data table and shaded grey")
+    lines.append("in the charts.")
+
+    os.makedirs("analysis", exist_ok=True)
+    out = "analysis/status.txt"
+    with open(out, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"saved: {out} ({health}, {coverage:.1f}% coverage)")
+
+
 # -------------------------------------------------------------------- map ---
 def cmd_map(path):
     fig, ax = plt.subplots(figsize=(9, 9), dpi=110)
@@ -548,6 +626,8 @@ if __name__ == "__main__":
         cmd_interactive()
     elif len(sys.argv) >= 2 and sys.argv[1] == "heatmap":
         cmd_heatmap()
+    elif len(sys.argv) >= 2 and sys.argv[1] == "status":
+        cmd_status()
     elif len(sys.argv) >= 2 and sys.argv[1] == "gif":
         cmd_gif(sys.argv[2] if len(sys.argv) >= 3 else None)
     else:
