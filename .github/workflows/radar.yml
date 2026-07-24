@@ -1,15 +1,14 @@
 name: Radar Andros
 
-# Coverage strategy: GitHub throttles scheduled workflows (observed cadence
-# ~2-2.7 h despite a 30-min cron), and RainViewer only exposes a rolling 2 h
-# window, so relying on cron timing loses frames. Instead, each job captures
-# in a loop (every 10 min for ~5.5 h, committing as it goes). The cron only
-# restarts the loop; the concurrency group queues the next run so it starts
-# as soon as the previous loop ends.
+# Coverage strategy: GitHub throttles scheduled workflows and caps a job at
+# 6 h, so the capture runs as a bounded loop (every 10 min for ~3 h) and the
+# cron restarts it. cancel-in-progress replaces any older loop immediately,
+# so there is always exactly one capturer alive and handover is instant.
+# RainViewer keeps a rolling 2 h window, so an instant handover loses nothing.
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 */2 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -17,12 +16,12 @@ permissions:
 
 concurrency:
   group: radar-capture
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 200
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -39,7 +38,7 @@ jobs:
         run: |
           git config user.name "radar-bot"
           git config user.email "actions@users.noreply.github.com"
-          end=$((SECONDS + 330*60))
+          end=$((SECONDS + 180*60))
           while [ $SECONDS -lt $end ]; do
             python capture.py || echo "capture cycle failed; retrying next cycle"
             git add data
