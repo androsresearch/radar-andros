@@ -43,6 +43,9 @@ jobs:
       - name: GIF, whole archive
         run: python analyze.py gif
 
+      - name: Capture health report
+        run: python analyze.py status
+
       # Only the deliverables. The cached coastline (analysis/*.json) is an
       # internal working file and is deliberately excluded.
       - name: Publish artifacts
@@ -54,4 +57,5 @@ jobs:
             analysis/*.png
             analysis/*.html
             analysis/*.gif
+            analysis/*.txt
           retention-days: 90
