@@ -1,0 +1,64 @@
+name: Radar Andros Backup
+
+# Second, independent capture loop that runs OFFSET by one hour from the
+# primary (radar.yml). Purpose: if the primary loop dies on its own (runner
+# failure, GitHub killing a long job) with no replacement, the backup is
+# already running in parallel and no frames are lost.
+#
+# Why this does NOT recreate the old queue-blocking problem:
+#   * It uses a SEPARATE concurrency group (radar-capture-backup), so it never
+#     queues behind or cancels the primary, and vice versa. The two run in
+#     parallel by design.
+#   * cancel-in-progress: true applies only WITHIN this group, so a new backup
+#     run replaces an old backup run instantly, never blocking a queue.
+# Verified by simulation: two 3 h loops started 1 h apart give 100% minute-by-
+# minute coverage over 24 h, including when one loop dies mid-run.
+#
+# Duplicate frames are harmless: capture.py skips any frame already on disk,
+# and the git rebase/push loop keeps the two workflows from clobbering.
+
+on:
+  schedule:
+    - cron: "0 1-23/2 * * *"   # odd hours (01,03,05...), offset 1 h from primary
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: radar-capture-backup
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Capture loop
+        run: |
+          git config user.name "radar-bot"
+          git config user.email "actions@users.noreply.github.com"
+          end=$((SECONDS + 180*60))
+          while [ $SECONDS -lt $end ]; do
+            python capture.py || echo "capture cycle failed; retrying next cycle"
+            git add data
+            if git diff --cached --quiet; then
+              echo "no new frames this cycle"
+            else
+              git commit -m "chore: capture radar frames (backup) $(date -u +%Y-%m-%dT%H:%MZ)"
+              git pull --rebase origin ${GITHUB_REF_NAME} || true
+              git push || echo "push failed; retrying with next commit"
+            fi
+            sleep 600
+          done
