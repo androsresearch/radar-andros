@@ -61,6 +61,11 @@ import os
 import sys
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+# Bahamas uses Eastern Time (America/Nassau): EDT (UTC-4) in summer,
+# EST (UTC-5) in winter. zoneinfo handles the DST transition automatically.
+_BAHAMAS_TZ = ZoneInfo("America/Nassau")
 
 import numpy as np
 import matplotlib
@@ -347,7 +352,12 @@ def cmd_series():
     a1.set_ylabel("dBZ")
     a1.legend()
     a1.grid(alpha=0.3)
-    a2.bar(tt, [r[5] for r in ok], width=0.006, color="steelblue")
+    # fill_between with step avoids the two-tone aliasing that bar() produces
+    # when there are more bars than pixels at the rendered dpi
+    cov_t = [tt[0] - timedelta(minutes=FRAME_MINUTES / 2)] + \
+            [t + timedelta(minutes=FRAME_MINUTES / 2) for t in tt]
+    cov_v = [ok[0][5]] + [r[5] for r in ok]
+    a2.fill_between(cov_t, cov_v, step="pre", color="steelblue", alpha=0.85)
     a2.set_ylabel("echo coverage (%)")
     half = timedelta(minutes=FRAME_MINUTES / 2)
     for r in rows:
@@ -531,6 +541,20 @@ def cmd_gif(day=None):
 
 
 
+def _fmt_gap_line(b, mins, flag):
+    """Format one gap line showing both UTC and Bahamas local time."""
+    def _local(dt):
+        loc = datetime(dt.year, dt.month, dt.day, dt.hour, dt.minute,
+                       tzinfo=timezone.utc).astimezone(_BAHAMAS_TZ)
+        return f"{loc:%H:%M %Z}"
+    start_utc = f"{b[0]:%m-%d %H:%M}Z"
+    end_utc   = f"{b[-1]:%m-%d %H:%M}Z"
+    start_loc = _local(b[0])
+    end_loc   = _local(b[-1])
+    return (f"  {start_utc} ({start_loc}) to {end_utc} ({end_loc})"
+            f"  ({len(b)} frames, {mins} min){flag}")
+
+
 # ----------------------------------------------------------------- status ---
 def cmd_status():
     """Write a short plain-text capture health report to analysis/status.txt.
@@ -562,10 +586,44 @@ def cmd_status():
     coverage = 100.0 * len(have) / len(slots)
     health = "GOOD" if coverage >= 95 else ("CHECK" if coverage >= 85 else "PROBLEM")
 
+    # Last-24h window: what happened since yesterday's daily analysis
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff_24h = now_utc - timedelta(hours=24)
+    slots_24h  = [s for s in slots  if s >= cutoff_24h]
+    have_24h   = [s for s in slots_24h if s in have]
+    miss_24h   = [s for s in slots_24h if s not in have]
+    cov_24h    = 100.0 * len(have_24h) / len(slots_24h) if slots_24h else 100.0
+    health_24h = "GOOD" if cov_24h >= 95 else ("CHECK" if cov_24h >= 85 else "PROBLEM")
+    lost_24h   = [b for b in blocks if any(m >= cutoff_24h for m in b)
+                  and len(b) * FRAME_MINUTES > 120]
+
     lines = []
     lines.append("ANDROS RADAR ARCHIVE - CAPTURE STATUS")
-    lines.append(f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M} UTC")
+    lines.append(f"Generated {now_utc:%Y-%m-%d %H:%M} UTC")
     lines.append("")
+    lines.append("--- LAST 24 HOURS (most recent daily cycle) ---")
+    lines.append(f"Status:            {health_24h}")
+    lines.append(f"Coverage:          {cov_24h:.1f}%"
+                 f"  ({len(have_24h)} of {len(slots_24h)} frames)")
+    if not miss_24h:
+        lines.append("No gaps in the last 24 h. Capture is running normally.")
+    else:
+        lines.append(f"Missing frames:    {len(miss_24h)}")
+        blocks_24h = []
+        for m in sorted(miss_24h):
+            if blocks_24h and m - blocks_24h[-1][-1] == timedelta(minutes=FRAME_MINUTES):
+                blocks_24h[-1].append(m)
+            else:
+                blocks_24h.append([m])
+        for b in sorted(blocks_24h, key=len, reverse=True)[:5]:
+            mins = len(b) * FRAME_MINUTES
+            flag = "  <- permanently lost (>2 h)" if mins > 120 else \
+                   "  (recoverable: still within 2 h window)" if mins <= 120 else ""
+            lines.append(_fmt_gap_line(b, mins, flag))
+        if lost_24h:
+            lines.append("ACTION NEEDED: capture workflow may be stalled.")
+    lines.append("")
+    lines.append("--- FULL ARCHIVE (since first captured frame) ---")
     lines.append(f"Status:            {health}")
     lines.append(f"Coverage:          {coverage:.1f}% of expected frames")
     lines.append(f"Archive period:    {times[0]:%Y-%m-%d %H:%M}Z to {times[-1]:%Y-%m-%d %H:%M}Z")
@@ -573,23 +631,19 @@ def cmd_status():
     lines.append(f"Frames captured:   {len(have)}")
     lines.append(f"Frames missing:    {len(missing)}")
     lines.append("")
-
     if not missing:
-        lines.append("No gaps: every expected frame was captured.")
+        lines.append("No gaps in the full archive.")
     else:
         lines.append(f"Gaps occur in {len(blocks)} separate outages. Longest:")
         for b in blocks[:8]:
             mins = len(b) * FRAME_MINUTES
             flag = "  <- permanently lost (>2 h)" if mins > 120 else ""
-            lines.append(f"  {b[0]:%m-%d %H:%M}Z to {b[-1]:%m-%d %H:%M}Z"
-                         f"  ({len(b)} frames, {mins} min){flag}")
+            lines.append(_fmt_gap_line(b, mins, flag))
         lines.append("")
         if lost:
-            lines.append(f"{len(lost)} outage(s) exceeded the 2 h RainViewer window, so those")
-            lines.append("frames cannot be recovered. Check that the capture workflow is running.")
+            lines.append(f"{len(lost)} outage(s) exceeded the 2 h RainViewer window.")
         else:
-            lines.append("All outages were shorter than the 2 h RainViewer window, so no")
-            lines.append("frames were permanently lost to a stalled capture.")
+            lines.append("All outages were shorter than the 2 h RainViewer window.")
 
     lines.append("")
     lines.append("Note: a gap means no image was archived for that moment. It does not")
